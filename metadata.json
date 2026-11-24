@@ -1,0 +1,6 @@
+{
+  "name": "CareBridge",
+  "description": "Sponsor and microloan platform connecting supporters with underprivileged, sick, and low-income individuals, featuring Ore the personal impact summarizer.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,243 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net: Default-deny all unmatched paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Shared Helper Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidBeneficiaryCase(data) {
+      return data.creatorId is string && data.creatorId.size() >= 1 && data.creatorId.size() <= 128 &&
+             data.beneficiaryName is string && data.beneficiaryName.size() >= 2 && data.beneficiaryName.size() <= 60 &&
+             data.region is string && data.region.size() >= 2 && data.region.size() <= 80 &&
+             data.title is string && data.title.size() >= 4 && data.title.size() <= 100 &&
+             data.story is string && data.story.size() >= 10 && data.story.size() <= 1500 &&
+             data.allocationPlan is string && data.allocationPlan.size() >= 4 && data.allocationPlan.size() <= 500 &&
+             data.category in ['medical', 'essentials', 'education', 'livelihood'] &&
+             data.supportType in ['sponsorship', 'microloan', 'both'] &&
+             data.goalAmountCents is int && data.goalAmountCents >= 500 && data.goalAmountCents <= 50000000 &&
+             data.raisedAmountCents is int && data.raisedAmountCents >= 0 && data.raisedAmountCents <= 100000000 &&
+             data.supporterCount is int && data.supporterCount >= 0 && data.supporterCount <= 1000000 &&
+             data.repaymentMonths is int && data.repaymentMonths >= 0 && data.repaymentMonths <= 36 &&
+             data.urgency in ['standard', 'urgent'] &&
+             data.status in ['active', 'funded'] &&
+             data.visibility == 'public' &&
+             data.coverAssetKey in ['hero', 'medical', 'livelihood'] &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidImpactUpdate(data) {
+      return data.caseId is string && isValidId(data.caseId) &&
+             data.authorId is string && data.authorId.size() >= 1 && data.authorId.size() <= 128 &&
+             data.headline is string && data.headline.size() >= 3 && data.headline.size() <= 100 &&
+             data.message is string && data.message.size() >= 5 && data.message.size() <= 1000 &&
+             data.milestoneType in ['progress', 'medical_update', 'repayment'] &&
+             data.visibility == 'public' &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidUserPledge(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.caseId is string && isValidId(data.caseId) &&
+             data.caseTitle is string && data.caseTitle.size() >= 2 && data.caseTitle.size() <= 100 &&
+             data.beneficiaryName is string && data.beneficiaryName.size() >= 2 && data.beneficiaryName.size() <= 60 &&
+             data.supportType in ['sponsorship', 'microloan'] &&
+             data.amountCents is int && data.amountCents >= 500 && data.amountCents <= 10000000 &&
+             data.repaidCents is int && data.repaidCents >= 0 && data.repaidCents <= data.amountCents &&
+             data.repaymentMonths is int && data.repaymentMonths >= 0 && data.repaymentMonths <= 36 &&
+             (!('note' in data) || (data.note is string && data.note.size() <= 300)) &&
+             data.status in ['active', 'repaid', 'fulfilled'] &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidOreNote(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.topic is string && data.topic.size() >= 2 && data.topic.size() <= 100 &&
+             data.prompt is string && data.prompt.size() >= 2 && data.prompt.size() <= 500 &&
+             data.summary is string && data.summary.size() >= 5 && data.summary.size() <= 4000 &&
+             data.scopeType in ['portfolio', 'case', 'discover', 'custom'] &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    // Top-level public community cases (no PII)
+    match /beneficiaryCases/{caseId} {
+      allow get: if isSignedIn() && isValidId(caseId) && resource.data.visibility == 'public';
+      allow list: if isSignedIn() && resource.data.visibility == 'public';
+
+      allow create: if isSignedIn() &&
+                       isValidId(caseId) &&
+                       incoming().keys().hasAll([
+                         'creatorId', 'beneficiaryName', 'region', 'title', 'story',
+                         'allocationPlan', 'category', 'supportType', 'goalAmountCents',
+                         'raisedAmountCents', 'supporterCount', 'repaymentMonths',
+                         'urgency', 'status', 'visibility', 'coverAssetKey',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'creatorId', 'beneficiaryName', 'region', 'title', 'story',
+                         'allocationPlan', 'category', 'supportType', 'goalAmountCents',
+                         'raisedAmountCents', 'supporterCount', 'repaymentMonths',
+                         'urgency', 'status', 'visibility', 'coverAssetKey',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidBeneficiaryCase(incoming()) &&
+                       incoming().creatorId == request.auth.uid &&
+                       incoming().raisedAmountCents == 0 &&
+                       incoming().supporterCount == 0 &&
+                       incoming().status == 'active';
+
+      allow update: if isSignedIn() &&
+                       isValidId(caseId) &&
+                       isValidBeneficiaryCase(incoming()) &&
+                       incoming().creatorId == existing().creatorId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().visibility == existing().visibility &&
+                       (
+                         // Action 1: Creator updates case story/plan/urgency/status
+                         (
+                           existing().creatorId == request.auth.uid &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'title', 'story', 'allocationPlan', 'urgency', 'status', 'updatedAt'
+                           ])
+                         ) ||
+                         // Action 2: Supporter contributes an atomic pledge to an active case
+                         (
+                           existing().status == 'active' &&
+                           incoming().raisedAmountCents > existing().raisedAmountCents &&
+                           incoming().raisedAmountCents <= existing().raisedAmountCents + 10000000 &&
+                           incoming().supporterCount == existing().supporterCount + 1 &&
+                           (
+                             incoming().status == existing().status ||
+                             (incoming().status == 'funded' && incoming().raisedAmountCents >= existing().goalAmountCents)
+                           ) &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'raisedAmountCents', 'supporterCount', 'status', 'updatedAt'
+                           ])
+                         )
+                       );
+
+      allow delete: if isSignedIn() &&
+                       isValidId(caseId) &&
+                       existing().creatorId == request.auth.uid &&
+                       existing().supporterCount == 0;
+
+      // Impact Updates Subcollection
+      match /updates/{updateId} {
+        allow get: if isSignedIn() && isValidId(caseId) && isValidId(updateId) && resource.data.visibility == 'public';
+        allow list: if isSignedIn() && isValidId(caseId) && resource.data.visibility == 'public';
+
+        allow create: if isSignedIn() &&
+                         isValidId(caseId) &&
+                         isValidId(updateId) &&
+                         incoming().keys().hasAll([
+                           'caseId', 'authorId', 'headline', 'message',
+                           'milestoneType', 'visibility', 'createdAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'caseId', 'authorId', 'headline', 'message',
+                           'milestoneType', 'visibility', 'createdAt'
+                         ]) &&
+                         isValidImpactUpdate(incoming()) &&
+                         incoming().caseId == caseId &&
+                         incoming().authorId == request.auth.uid &&
+                         exists(/databases/$(database)/documents/beneficiaryCases/$(caseId)) &&
+                         get(/databases/$(database)/documents/beneficiaryCases/$(caseId)).data.creatorId == request.auth.uid;
+
+        allow update: if false;
+        allow delete: if isSignedIn() &&
+                         isValidId(caseId) &&
+                         isValidId(updateId) &&
+                         existing().authorId == request.auth.uid;
+      }
+    }
+
+    // User-scoped private pledges & microloan ledger
+    match /users/{userId}/pledges/{pledgeId} {
+      allow get: if isOwner(userId) && isValidId(userId) && isValidId(pledgeId);
+      allow list: if isOwner(userId) && isValidId(userId);
+
+      allow create: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       isValidId(pledgeId) &&
+                       incoming().keys().hasAll([
+                         'userId', 'caseId', 'caseTitle', 'beneficiaryName',
+                         'supportType', 'amountCents', 'repaidCents',
+                         'repaymentMonths', 'status', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'caseId', 'caseTitle', 'beneficiaryName',
+                         'supportType', 'amountCents', 'repaidCents',
+                         'repaymentMonths', 'note', 'status', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidUserPledge(incoming()) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().repaidCents == 0 &&
+                       exists(/databases/$(database)/documents/beneficiaryCases/$(incoming().caseId));
+
+      allow update: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       isValidId(pledgeId) &&
+                       isValidUserPledge(incoming()) &&
+                       existing().status == 'active' &&
+                       incoming().userId == existing().userId &&
+                       incoming().caseId == existing().caseId &&
+                       incoming().caseTitle == existing().caseTitle &&
+                       incoming().beneficiaryName == existing().beneficiaryName &&
+                       incoming().supportType == existing().supportType &&
+                       incoming().amountCents == existing().amountCents &&
+                       incoming().repaymentMonths == existing().repaymentMonths &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'repaidCents', 'status', 'note', 'updatedAt'
+                       ]);
+
+      allow delete: if false;
+    }
+
+    // User-scoped Ore AI saved summaries
+    match /users/{userId}/oreNotes/{noteId} {
+      allow get: if isOwner(userId) && isValidId(userId) && isValidId(noteId);
+      allow list: if isOwner(userId) && isValidId(userId);
+
+      allow create: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       isValidId(noteId) &&
+                       incoming().keys().hasAll([
+                         'userId', 'topic', 'prompt', 'summary', 'scopeType', 'createdAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'topic', 'prompt', 'summary', 'scopeType', 'createdAt'
+                       ]) &&
+                       isValidOreNote(incoming()) &&
+                       incoming().userId == request.auth.uid;
+
+      allow update: if false;
+      allow delete: if isOwner(userId) && isValidId(userId) && isValidId(noteId);
+    }
+  }
+}

@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">CareBridge</string>
+    <string name="tagline">Dignified sponsorships, 0% microloans, and transparent impact.</string>
+    <string name="nav_discover">Discover</string>
+    <string name="nav_portfolio">Impact</string>
+    <string name="nav_ore">Ore</string>
+    <string name="nav_submit">Submit</string>
+    <string name="sign_in_google">Sign in with Google</string>
+    <string name="sign_out">Sign out</string>
+    <string name="ore_greeting">Hi, I am Ore — your personal steward. Share notes, paste a story, or tap a digest below and I will summarize everything clearly.</string>
+</resources>
